@@ -95,7 +95,7 @@
     "octokit": "^5.0.5"
   },
   "engines": {
-    "node": ">=24.9.0"
+    "node": ">=20.0.0"
   },
   "packageManager": "pnpm@10.33.2"
 }
