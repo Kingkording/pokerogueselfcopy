@@ -35,7 +35,7 @@
     "biome:ci": "biome ci --diagnostic-level=error --reporter=github --reporter=default --no-errors-on-unmatched",
     "typedoc": "typedoc",
     "depcruise": "depcruise src test",
-    "postinstall": "echo ready"
+    "postinstall": "echo ready",
     "update-locales": "pnpm update-submodules locales",
     "update-locales:remote": "pnpm update-submodules:remote locales",
     "update-assets": "pnpm update-submodules assets",
