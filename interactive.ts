@@ -1,49 +1,87 @@
 /*
- * SPDX-FileCopyrightText: 2024-2025 Pagefault Games
+ * SPDX-FileCopyrightText: 2025 Pagefault Games
+ * SPDX-FileContributor: Bertie690
  *
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import type { TestType } from "#create-test/constants";
-import { validTestTypes } from "#create-test/constants";
+import { showHelpText } from "#parse-egg-moves/help-message";
+import type { Option } from "#parse-egg-moves/types";
+import fs from "node:fs";
 import { input, select } from "@inquirer/prompts";
-import chalk from "chalk";
 
 /**
- * Prompt the user to select a test type via list.
- * @returns The selected type, or `undefined` if "Exit" was pressed.
+ * Prompt the user to interactively select an option (console/file) to retrieve the egg move CSV.
+ * @returns The selected option value
  */
-export async function promptTestType(): Promise<TestType | undefined> {
-  const choice = await select({
-    message: "What type of test would you like to create?",
-    choices: [...validTestTypes, "EXIT"] as const,
+export async function runInteractive(): Promise<Option> {
+  const answer = await select({
+    message: "Select the method to obtain egg moves.",
+    choices: ["Console", "File", "Help", "Exit"] as const,
   });
 
-  if (choice === "EXIT") {
+  if (answer === "Exit") {
     console.log("Exiting...");
     process.exitCode = 0;
-    return;
+    return { type: "Exit" };
   }
 
-  return choice;
+  if (answer === "Help") {
+    showHelpText();
+    return { type: "Exit" };
+  }
+
+  return { type: answer, value: await promptForValue(answer) };
 }
 
 /**
- * Prompt the user to provide a file name.
- * @param selectedType - The chosen type (used for the prompt message)
- * @returns The selected file name
+ * Prompt the user to give a value (either the direct CSV or the file path).
+ * @param type - The input method
+ * @returns A Promise resolving with the CSV/file path.
  */
-export async function promptFileName(selectedType: TestType): Promise<string> {
-  const fileNameAnswer = await input({
-    message: `Please provide the name of the ${selectedType}.`,
-    validate: name => {
-      const nameProcessed = name.trim().replace(".test.ts", "");
-      if (nameProcessed.length === 0) {
-        return chalk.red.bold("✗ Cannot use an empty string as a file name!");
+function promptForValue(type: "Console" | "File"): Promise<string> {
+  switch (type) {
+    case "Console":
+      return doPromptConsole();
+    case "File":
+      return getFilePath();
+  }
+}
+
+/**
+ * Prompt the user to enter a file path from the console.
+ * @returns The file path inputted by the user.
+ */
+async function getFilePath(): Promise<string> {
+  return await input({
+    message: "Please enter the path to the egg move CSV file.",
+    validate: filePath => {
+      if (filePath.trim() === "") {
+        return "File path cannot be empty!";
+      }
+      if (!fs.existsSync(filePath)) {
+        return "File does not exist!";
       }
       return true;
     },
   });
+}
 
-  return fileNameAnswer.trim().replace(".test.ts", "");
+/**
+ * Prompt the user for CSV input from the console.
+ * @returns The CSV input from the user.
+ */
+async function doPromptConsole(): Promise<string> {
+  return await input({
+    message: "Please enter the egg move CSV text.",
+    validate: value => {
+      if (value.trim() === "") {
+        return "CSV text cannot be empty!";
+      }
+      if (!value.match(/^[^,]+(,[^,]+){4}$/gm)) {
+        return "CSV text malformed - should contain 5 consecutive comma-separated values per line!";
+      }
+      return true;
+    },
+  });
 }
