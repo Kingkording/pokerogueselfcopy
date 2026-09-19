@@ -1,19 +1,25 @@
-import type { BattleScene } from "#app/battle-scene";
-import * as messages from "#app/messages";
-import { BindTag, SubstituteTag } from "#data/battler-tags";
+import { SubstituteTag, TrappedTag } from "#data/battler-tags";
 import { allMoves } from "#data/data-lists";
-import type { PokemonTurnData } from "#data/pokemon-data";
-import { BattlerTagLapseType } from "#enums/battler-tag-lapse-type";
+import { AbilityId } from "#enums/ability-id";
+import { ArenaTagSide } from "#enums/arena-tag-side";
+import { ArenaTagType } from "#enums/arena-tag-type";
+import { BattlerIndex } from "#enums/battler-index";
+import { BattlerTagType } from "#enums/battler-tag-type";
+import { BerryType } from "#enums/berry-type";
+import { Command } from "#enums/command";
 import { MoveId } from "#enums/move-id";
 import { MoveResult } from "#enums/move-result";
-import { PokemonAnimType } from "#enums/pokemon-anim-type";
-import type { Pokemon } from "#field/pokemon";
-import type { MoveEffectPhase } from "#phases/move-effect-phase";
+import { SpeciesId } from "#enums/species-id";
+import { Stat } from "#enums/stat";
+import { StatusEffect } from "#enums/status-effect";
+import { UiMode } from "#enums/ui-mode";
+import { StealHeldItemChanceAttr } from "#moves/move";
+import type { CommandPhase } from "#phases/command-phase";
 import { GameManager } from "#test/framework/game-manager";
-import type { TurnMove } from "#types/turn-move";
+import Phaser from "phaser";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("BattlerTag - SubstituteTag", () => {
+describe("Moves - Substitute", () => {
   let phaserGame: Phaser.Game;
   let game: GameManager;
 
@@ -25,196 +31,492 @@ describe("BattlerTag - SubstituteTag", () => {
 
   beforeEach(() => {
     game = new GameManager(phaserGame);
+
+    game.override
+      .battleStyle("single")
+      .moveset([MoveId.SUBSTITUTE, MoveId.SWORDS_DANCE, MoveId.TACKLE, MoveId.SPLASH])
+      .enemySpecies(SpeciesId.SNORLAX)
+      .enemyAbility(AbilityId.INSOMNIA)
+      .enemyMoveset(MoveId.SPLASH)
+      .startingLevel(100)
+      .enemyLevel(100);
   });
 
-  let mockPokemon: Pokemon;
+  it("should cause the user to take damage", async () => {
+    await game.classicMode.startBattle(SpeciesId.MAGIKARP);
 
-  describe("onAdd behavior", () => {
-    beforeEach(() => {
-      mockPokemon = {
-        scene: game.scene,
-        hp: 101,
-        id: 0,
-        getMaxHp: vi.fn().mockReturnValue(101) as Pokemon["getMaxHp"],
-        findAndRemoveTags: vi.fn().mockImplementation(tagFilter => {
-          // simulate a Trapped tag set by another Pokemon, then expect the filter to catch it.
-          const trapTag = new BindTag(5, 0);
-          expect(tagFilter(trapTag)).toBeTruthy();
-        }) as Pokemon["findAndRemoveTags"],
-      } as unknown as Pokemon;
+    const leadPokemon = game.field.getPlayerPokemon();
 
-      vi.spyOn(messages, "getPokemonNameWithAffix").mockReturnValue("");
-      vi.spyOn(mockPokemon.scene as BattleScene, "getPokemonById").mockImplementation(pokemonId =>
-        mockPokemon.id === pokemonId ? mockPokemon : undefined,
-      );
-    });
+    game.move.select(MoveId.SUBSTITUTE);
 
-    it("sets the tag's HP to 1/4 of the source's max HP (rounded down)", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
+    await game.phaseInterceptor.to("MoveEndPhase", false);
 
-      vi.spyOn(mockPokemon.scene as BattleScene, "triggerPokemonBattleAnim").mockReturnValue(true);
-      vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
-
-      subject.onAdd(mockPokemon);
-
-      expect(subject.hp).toBe(25);
-    });
-
-    it("triggers on-add effects that bring the source out of focus", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
-
-      vi.spyOn(mockPokemon.scene as BattleScene, "triggerPokemonBattleAnim").mockImplementation(
-        (_pokemon, battleAnimType, _fieldAssets?, _delayed?) => {
-          expect(battleAnimType).toBe(PokemonAnimType.SUBSTITUTE_ADD);
-          return true;
-        },
-      );
-
-      const msgSpy = vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
-
-      subject.onAdd(mockPokemon);
-
-      expect(subject.sourceInFocus).toBeFalsy();
-      expect((mockPokemon.scene as BattleScene).triggerPokemonBattleAnim).toHaveBeenCalledTimes(1);
-      expect(msgSpy).toHaveBeenCalledOnce();
-    });
-
-    it("removes effects that trap the source", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
-
-      vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
-
-      subject.onAdd(mockPokemon);
-      expect(mockPokemon.findAndRemoveTags).toHaveBeenCalledTimes(1);
-    });
+    expect(leadPokemon.hp).toBe(Math.ceil((leadPokemon.getMaxHp() * 3) / 4));
   });
 
-  describe("onRemove behavior", () => {
-    beforeEach(() => {
-      mockPokemon = {
-        scene: game.scene,
-        hp: 101,
-        id: 0,
-        isFainted: vi.fn().mockReturnValue(false) as Pokemon["isFainted"],
-      } as unknown as Pokemon;
+  it("should redirect enemy attack damage to the Substitute doll", async () => {
+    game.override.enemyMoveset(MoveId.TACKLE);
 
-      vi.spyOn(messages, "getPokemonNameWithAffix").mockReturnValue("");
-    });
+    await game.classicMode.startBattle(SpeciesId.SKARMORY);
 
-    it("triggers on-remove animation and message", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
-      subject.sourceInFocus = false;
+    const leadPokemon = game.field.getPlayerPokemon();
 
-      vi.spyOn(mockPokemon.scene as BattleScene, "triggerPokemonBattleAnim").mockImplementation(
-        (_pokemon, battleAnimType, _fieldAssets?, _delayed?) => {
-          expect(battleAnimType).toBe(PokemonAnimType.SUBSTITUTE_REMOVE);
-          return true;
-        },
-      );
+    game.move.select(MoveId.SUBSTITUTE);
 
-      const msgSpy = vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
+    await game.phaseInterceptor.to("MoveEndPhase", false);
 
-      subject.onRemove(mockPokemon);
+    expect(leadPokemon.hp).toBe(Math.ceil((leadPokemon.getMaxHp() * 3) / 4));
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeDefined();
+    const postSubHp = leadPokemon.hp;
 
-      expect((mockPokemon.scene as BattleScene).triggerPokemonBattleAnim).toHaveBeenCalledTimes(1);
-      expect(msgSpy).toHaveBeenCalledOnce();
-    });
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.hp).toBe(postSubHp);
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeDefined();
   });
 
-  describe("lapse behavior", () => {
-    beforeEach(() => {
-      mockPokemon = {
-        scene: game.scene,
-        hp: 101,
-        id: 0,
-        turnData: { acted: true } as PokemonTurnData,
-        getLastXMoves: vi
-          .fn()
-          .mockReturnValue([
-            { move: MoveId.TACKLE, result: MoveResult.SUCCESS } as TurnMove,
-          ]) as Pokemon["getLastXMoves"],
-      } as unknown as Pokemon;
+  it("should fade after redirecting more damage than its remaining HP", async () => {
+    // Giga Impact OHKOs Magikarp if substitute isn't up
+    game.override.enemyMoveset(MoveId.GIGA_IMPACT);
+    vi.spyOn(allMoves[MoveId.GIGA_IMPACT], "accuracy", "get").mockReturnValue(100);
 
-      vi.spyOn(messages, "getPokemonNameWithAffix").mockReturnValue("");
+    await game.classicMode.startBattle(SpeciesId.MAGIKARP);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    game.move.select(MoveId.SUBSTITUTE);
+
+    await game.phaseInterceptor.to("MoveEndPhase", false);
+
+    expect(leadPokemon.hp).toBe(Math.ceil((leadPokemon.getMaxHp() * 3) / 4));
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeDefined();
+    const postSubHp = leadPokemon.hp;
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.hp).toBe(postSubHp);
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeUndefined();
+  });
+
+  it("should block stat changes from status moves", async () => {
+    game.override.enemyMoveset(MoveId.CHARM);
+
+    await game.classicMode.startBattle(SpeciesId.MAGIKARP);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    game.move.select(MoveId.SUBSTITUTE);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getStatStage(Stat.ATK)).toBe(0);
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeDefined();
+  });
+
+  it("should be bypassed by sound-based moves", async () => {
+    game.override.enemyMoveset(MoveId.ECHOED_VOICE);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    game.move.select(MoveId.SUBSTITUTE);
+
+    await game.phaseInterceptor.to("MoveEndPhase");
+
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeDefined();
+    const postSubHp = leadPokemon.hp;
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeDefined();
+    expect(leadPokemon.hp).toBeLessThan(postSubHp);
+  });
+
+  it("should be bypassed by attackers with Infiltrator", async () => {
+    game.override.enemyMoveset(MoveId.TACKLE).enemyAbility(AbilityId.INFILTRATOR);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    game.move.select(MoveId.SUBSTITUTE);
+
+    await game.phaseInterceptor.to("MoveEndPhase");
+
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeDefined();
+    const postSubHp = leadPokemon.hp;
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getTag(BattlerTagType.SUBSTITUTE)).toBeDefined();
+    expect(leadPokemon.hp).toBeLessThan(postSubHp);
+  });
+
+  it("shouldn't block the user's own status moves", async () => {
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    game.move.select(MoveId.SUBSTITUTE);
+
+    await game.phaseInterceptor.to("MoveEndPhase");
+    await game.toNextTurn();
+
+    game.move.select(MoveId.SWORDS_DANCE);
+
+    await game.phaseInterceptor.to("MoveEndPhase", false);
+
+    expect(leadPokemon.getStatStage(Stat.ATK)).toBe(2);
+  });
+
+  it("shouldn't block moves that target the user's side of the field", async () => {
+    game.override.moveset(MoveId.LIGHT_SCREEN);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+    vi.spyOn(leadPokemon, "getMoveEffectiveness");
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.LIGHT_SCREEN);
+
+    await game.toNextTurn();
+
+    expect(leadPokemon.getMoveEffectiveness).not.toHaveReturnedWith(0);
+    expect(game.scene.arena.getTagOnSide(ArenaTagType.LIGHT_SCREEN, ArenaTagSide.PLAYER)).toBeDefined();
+  });
+
+  it("shouldn't block the opponent from setting hazards", async () => {
+    game.override.enemyMoveset(MoveId.STEALTH_ROCK);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+    vi.spyOn(leadPokemon, "getMoveEffectiveness");
+
+    game.move.select(MoveId.SUBSTITUTE);
+
+    await game.toNextTurn();
+
+    expect(leadPokemon.getMoveEffectiveness).not.toHaveReturnedWith(0);
+    expect(game.scene.arena.getTagOnSide(ArenaTagType.STEALTH_ROCK, ArenaTagSide.PLAYER)).toBeDefined();
+  });
+
+  it("shouldn't block moves that target both sides of the field", async () => {
+    game.override.moveset(MoveId.TRICK_ROOM).enemyMoveset(MoveId.GRAVITY);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const pokemon = game.scene.getField(true);
+    pokemon.forEach(p => {
+      vi.spyOn(p, "getMoveEffectiveness");
+      p.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, p.id);
     });
 
-    it("MOVE lapse triggers pre-move animation", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
+    game.move.select(MoveId.TRICK_ROOM);
 
-      vi.spyOn(mockPokemon.scene as BattleScene, "triggerPokemonBattleAnim").mockImplementation(
-        (_pokemon, battleAnimType, _fieldAssets?, _delayed?) => {
-          expect(battleAnimType).toBe(PokemonAnimType.SUBSTITUTE_PRE_MOVE);
-          return true;
-        },
-      );
+    await game.toNextTurn();
 
-      vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
+    pokemon.forEach(p => expect(p.getMoveEffectiveness).not.toHaveReturnedWith(0));
+    expect(game.scene.arena.getTag(ArenaTagType.TRICK_ROOM)).toBeDefined();
+    expect(game.scene.arena.getTag(ArenaTagType.GRAVITY)).toBeDefined();
+  });
 
-      expect(subject.lapse(mockPokemon, BattlerTagLapseType.MOVE)).toBeTruthy();
+  it("should protect the user from flinching", async () => {
+    game.override.enemyMoveset(MoveId.FAKE_OUT).startingLevel(1); // Ensures the Substitute will break
 
-      expect(subject.sourceInFocus).toBeTruthy();
-      expect((mockPokemon.scene as BattleScene).triggerPokemonBattleAnim).toHaveBeenCalledTimes(1);
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+    const enemyPokemon = game.field.getEnemyPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.TACKLE);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(enemyPokemon.hp).toBeLessThan(enemyPokemon.getMaxHp());
+  });
+
+  it("should protect the user from being trapped", async () => {
+    vi.spyOn(allMoves[MoveId.SAND_TOMB], "accuracy", "get").mockReturnValue(100);
+    game.override.enemyMoveset(MoveId.SAND_TOMB);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.SPLASH);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getTag(TrappedTag)).toBeUndefined();
+  });
+
+  it("should prevent the user's stats from being lowered", async () => {
+    vi.spyOn(allMoves[MoveId.LIQUIDATION], "chance", "get").mockReturnValue(100);
+    game.override.enemyMoveset(MoveId.LIQUIDATION);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.SPLASH);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getStatStage(Stat.DEF)).toBe(0);
+  });
+
+  it("should protect the user from being afflicted with status effects", async () => {
+    game.override.enemyMoveset(MoveId.NUZZLE);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.SPLASH);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon).not.toHaveStatusEffect(StatusEffect.PARALYSIS);
+  });
+
+  it("should prevent the user's items from being stolen", async () => {
+    game.override.enemyMoveset(MoveId.THIEF).startingHeldItems([{ name: "BERRY", type: BerryType.SITRUS }]);
+    vi.spyOn(allMoves[MoveId.THIEF], "attrs", "get").mockReturnValue([new StealHeldItemChanceAttr(1.0)]); // give Thief 100% steal rate
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.SPLASH);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getHeldItems().length).toBe(1);
+  });
+
+  it("should prevent the user's items from being removed", async () => {
+    game.override.moveset([MoveId.KNOCK_OFF]).enemyHeldItems([{ name: "BERRY", type: BerryType.SITRUS }]);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const enemyPokemon = game.field.getEnemyPokemon();
+
+    enemyPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, enemyPokemon.id);
+    const enemyNumItems = enemyPokemon.getHeldItems().length;
+
+    game.move.select(MoveId.KNOCK_OFF);
+
+    await game.phaseInterceptor.to("MoveEndPhase", false);
+
+    expect(enemyPokemon.getHeldItems().length).toBe(enemyNumItems);
+  });
+
+  it("move effect should prevent the user's berries from being stolen and eaten", async () => {
+    game.override.enemyMoveset(MoveId.BUG_BITE).startingHeldItems([{ name: "BERRY", type: BerryType.SITRUS }]);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+    const enemyPokemon = game.field.getEnemyPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.TACKLE);
+
+    await game.phaseInterceptor.to("MoveEndPhase", false);
+    const enemyPostAttackHp = enemyPokemon.hp;
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getHeldItems().length).toBe(1);
+    expect(enemyPokemon.hp).toBe(enemyPostAttackHp);
+  });
+
+  it("should prevent the user's stats from being reset by Clear Smog", async () => {
+    game.override.enemyMoveset(MoveId.CLEAR_SMOG);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.SWORDS_DANCE);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getStatStage(Stat.ATK)).toBe(2);
+  });
+
+  it("should prevent the user from becoming confused", async () => {
+    game.override.enemyMoveset(MoveId.MAGICAL_TORQUE);
+    vi.spyOn(allMoves[MoveId.MAGICAL_TORQUE], "chance", "get").mockReturnValue(100);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    game.move.select(MoveId.SWORDS_DANCE);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(leadPokemon.getTag(BattlerTagType.CONFUSED)).toBeUndefined();
+    expect(leadPokemon.getStatStage(Stat.ATK)).toBe(2);
+  });
+
+  it("should transfer to the switched in Pokemon when the source uses Baton Pass", async () => {
+    game.override.moveset([MoveId.SUBSTITUTE, MoveId.BATON_PASS]);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE, SpeciesId.CHARIZARD);
+
+    const leadPokemon = game.field.getPlayerPokemon();
+
+    leadPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, leadPokemon.id);
+
+    // Simulate a Baton switch for the player this turn
+    game.onNextPrompt("CommandPhase", UiMode.COMMAND, () => {
+      (game.scene.phaseManager.getCurrentPhase() as CommandPhase).handleCommand(Command.POKEMON, 1, true);
     });
 
-    it("AFTER_MOVE lapse triggers post-move animation", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
+    await game.phaseInterceptor.to("MovePhase", false);
 
-      vi.spyOn(mockPokemon.scene as BattleScene, "triggerPokemonBattleAnim").mockImplementation(
-        (_pokemon, battleAnimType, _fieldAssets?, _delayed?) => {
-          expect(battleAnimType).toBe(PokemonAnimType.SUBSTITUTE_POST_MOVE);
-          return true;
-        },
-      );
+    const switchedPokemon = game.field.getPlayerPokemon();
+    const subTag = switchedPokemon.getTag(SubstituteTag)!;
+    expect(subTag).toBeDefined();
+    expect(subTag.hp).toBe(Math.floor((leadPokemon.getMaxHp() * 1) / 4));
+  });
 
-      const msgSpy = vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
+  it("should prevent the source's Rough Skin from activating when hit", async () => {
+    game.override.enemyMoveset(MoveId.TACKLE).ability(AbilityId.ROUGH_SKIN);
 
-      expect(subject.lapse(mockPokemon, BattlerTagLapseType.AFTER_MOVE)).toBeTruthy();
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
 
-      expect(subject.sourceInFocus).toBeFalsy();
-      expect((mockPokemon.scene as BattleScene).triggerPokemonBattleAnim).toHaveBeenCalledTimes(1);
-      expect(msgSpy).not.toHaveBeenCalled();
-    });
+    const enemyPokemon = game.field.getEnemyPokemon();
 
-    // TODO: Figure out how to mock a MoveEffectPhase correctly for this test
-    it.todo("HIT lapse triggers on-hit message", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
+    game.move.select(MoveId.SUBSTITUTE);
 
-      vi.spyOn(mockPokemon.scene as BattleScene, "triggerPokemonBattleAnim").mockReturnValue(true);
-      const msgSpy = vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
+    await game.phaseInterceptor.to("BerryPhase", false);
 
-      const moveEffectPhase = {
-        move: allMoves[MoveId.TACKLE],
-        getUserPokemon: vi.fn().mockReturnValue(undefined) as MoveEffectPhase["getUserPokemon"],
-      } as MoveEffectPhase;
+    expect(enemyPokemon.hp).toBe(enemyPokemon.getMaxHp());
+  });
 
-      vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "getCurrentPhase").mockReturnValue(moveEffectPhase);
-      vi.spyOn(allMoves[MoveId.TACKLE], "hitsSubstitute").mockReturnValue(true);
+  it("should prevent the source's Focus Punch from failing when hit", async () => {
+    game.override.enemyMoveset(MoveId.TACKLE).moveset([MoveId.FOCUS_PUNCH]);
 
-      expect(subject.lapse(mockPokemon, BattlerTagLapseType.HIT)).toBeTruthy();
+    // Make Focus Punch 40 power to avoid a KO
+    vi.spyOn(allMoves[MoveId.FOCUS_PUNCH], "calculateBattlePower").mockReturnValue(40);
 
-      expect((mockPokemon.scene as BattleScene).triggerPokemonBattleAnim).not.toHaveBeenCalled();
-      expect(msgSpy).toHaveBeenCalledOnce();
-    });
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
 
-    it("CUSTOM lapse flags the tag for removal", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
+    const playerPokemon = game.field.getPlayerPokemon();
+    const enemyPokemon = game.field.getEnemyPokemon();
 
-      vi.spyOn(mockPokemon.scene as BattleScene, "triggerPokemonBattleAnim").mockReturnValue(true);
-      vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
+    playerPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, playerPokemon.id);
 
-      expect(subject.lapse(mockPokemon, BattlerTagLapseType.CUSTOM)).toBeFalsy();
-    });
+    game.move.select(MoveId.FOCUS_PUNCH);
 
-    it("Unsupported lapse type does nothing", async () => {
-      const subject = new SubstituteTag(MoveId.SUBSTITUTE, mockPokemon.id);
+    await game.phaseInterceptor.to("BerryPhase", false);
 
-      vi.spyOn(mockPokemon.scene as BattleScene, "triggerPokemonBattleAnim").mockReturnValue(true);
-      const msgSpy = vi.spyOn((mockPokemon.scene as BattleScene).phaseManager, "queueMessage").mockReturnValue();
+    expect(playerPokemon.getLastXMoves()[0].result).toBe(MoveResult.SUCCESS);
+    expect(enemyPokemon.hp).toBeLessThan(enemyPokemon.getMaxHp());
+  });
 
-      expect(subject.lapse(mockPokemon, BattlerTagLapseType.TURN_END)).toBeTruthy();
+  it("should not allow Shell Trap to activate when attacked", async () => {
+    game.override.enemyMoveset(MoveId.TACKLE).moveset([MoveId.SHELL_TRAP]);
 
-      expect((mockPokemon.scene as BattleScene).triggerPokemonBattleAnim).not.toHaveBeenCalled();
-      expect(msgSpy).not.toHaveBeenCalled();
-    });
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const playerPokemon = game.field.getPlayerPokemon();
+
+    playerPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, playerPokemon.id);
+
+    game.move.select(MoveId.SHELL_TRAP);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(playerPokemon.getLastXMoves()[0].result).toBe(MoveResult.FAIL);
+  });
+
+  it("should not allow Beak Blast to burn opponents when hit", async () => {
+    game.override.enemyMoveset(MoveId.TACKLE).moveset([MoveId.BEAK_BLAST]);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const playerPokemon = game.field.getPlayerPokemon();
+    const enemyPokemon = game.field.getEnemyPokemon();
+
+    playerPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, playerPokemon.id);
+
+    game.move.select(MoveId.BEAK_BLAST);
+
+    await game.phaseInterceptor.to("MoveEndPhase");
+
+    expect(enemyPokemon).not.toHaveStatusEffect(StatusEffect.BURN);
+  });
+
+  it("should cause incoming attacks to not activate Counter", async () => {
+    game.override.enemyMoveset(MoveId.TACKLE).moveset([MoveId.COUNTER]);
+
+    await game.classicMode.startBattle(SpeciesId.BLASTOISE);
+
+    const playerPokemon = game.field.getPlayerPokemon();
+    const enemyPokemon = game.field.getEnemyPokemon();
+
+    playerPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, playerPokemon.id);
+
+    game.move.select(MoveId.COUNTER);
+
+    await game.phaseInterceptor.to("BerryPhase", false);
+
+    expect(playerPokemon.getLastXMoves()[0].result).toBe(MoveResult.FAIL);
+    expect(enemyPokemon.hp).toBe(enemyPokemon.getMaxHp());
+  });
+
+  it("should prevent Sappy Seed from applying its Leech Seed effect to the user", async () => {
+    game.override.enemyMoveset(MoveId.SAPPY_SEED);
+
+    await game.classicMode.startBattle(SpeciesId.CHARIZARD);
+
+    const playerPokemon = game.field.getPlayerPokemon();
+
+    playerPokemon.addTag(BattlerTagType.SUBSTITUTE, 0, MoveId.NONE, playerPokemon.id);
+
+    game.move.select(MoveId.SPLASH);
+
+    game.setTurnOrder([BattlerIndex.ENEMY, BattlerIndex.PLAYER]); // enemy uses Sappy Seed first
+    await game.move.forceHit(); // forces Sappy Seed to hit
+    await game.phaseInterceptor.to("MoveEndPhase");
+
+    expect(playerPokemon.getTag(BattlerTagType.SEEDED)).toBeUndefined();
+  });
+
+  it("should fail if the user has 1 max HP", async () => {
+    await game.classicMode.startBattle(SpeciesId.SHEDINJA);
+
+    const player = game.field.getPlayerPokemon();
+
+    game.move.use(MoveId.SUBSTITUTE);
+    await game.toEndOfTurn();
+
+    expect(player).toHaveUsedMove({ move: MoveId.SUBSTITUTE, result: MoveResult.FAIL });
+    expect(player).not.toHaveBattlerTag(BattlerTagType.SUBSTITUTE);
+    expect(player).toHaveFullHp();
+    expect(player).toHaveHp(1);
   });
 });
