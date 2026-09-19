@@ -1,41 +1,28 @@
 /*
- * SPDX-FileCopyrightText: 2025 Pagefault Games
+ * SPDX-FileCopyrightText: 2026 Pagefault Games
  * SPDX-FileContributor: Fabske0
  *
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-/**
- * All accepted options for editing the daily seed config directly.
- */
-export const EDIT_OPTIONS = [
-  "starters",
-  "boss",
-  "biome",
-  "luck",
-  "forced waves",
-  "trainer manipulation",
-  "challenges",
-  "mystery encounters",
-  "starting money",
-  "seed",
-  "edit",
-  "finish",
-  "exit",
-] as const;
+import { defaultCommanderHelpArgs } from "#script-utils/arguments";
+import { join } from "path";
+import { Command } from "@commander-js/extra-typings";
 
-/** All accepted options for configuring a boss Pokemon. */
-export const BOSS_OPTIONS = [
-  "formIndex",
-  "variant",
-  "moveset",
-  "nature",
-  "ability",
-  "passive",
-  "segments",
-  "catchable",
-  "finish",
-] as const;
+export const SCRIPT_VERSION = "1.0.0";
 
-/** All accepted options for configuring a starter Pokemon. */
-export const STARTER_OPTIONS = ["formIndex", "variant", "moveset", "nature", "ability", "passive", "finish"] as const;
+const programm = new Command("pnpm species-data:export")
+  .description("Exports species related data from the src so it can be used for other purposes, such as the wiki.")
+  .helpOption("-h, --help", "Show this help message.")
+  .version(SCRIPT_VERSION, "-v, --version", "Show the version number.")
+  .option("--no-clean", "Disable cleaning the output directory before writing new data")
+  .option("--json", "Whether to output the data as JSON instead of CSV", false)
+  .option("--debug", "Whether to log additional debug information during scraping", false)
+  .configureHelp(defaultCommanderHelpArgs)
+  .showHelpAfterError(true)
+  .parse();
+
+export const cliArgs = programm.opts();
+
+export const PROJECT_ROOT = join(import.meta.dirname, "..", "..");
+export const OUTPUT_DIR = join(PROJECT_ROOT, "species-output");
